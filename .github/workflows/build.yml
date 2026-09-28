@@ -56,8 +56,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # The source tarball lands in output/, which the archive excludes,
-          # so tar never reads its own growing file.
+          # The container wrote output/ as root; the runner takes it over. The
+          # source tarball lands there too, which the archive excludes, so tar
+          # never reads its own growing file.
+          sudo chown -R "$(id -u):$(id -g)" output
           tar -czf "output/nxs-jetson-${TAG}-src.tar.gz" --exclude=.git --exclude=output .
           ( cd output && sha256sum "nxs-jetson_${TAG}_arm64.deb" "nxs-jetson-${TAG}-src.tar.gz" > SHA256SUMS.txt )
           revision="${DEB_REVISION:-1}"
