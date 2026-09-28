@@ -276,7 +276,10 @@ deb() {
         esac
     done
     rsync -a "${REPO_DIR}/source/" "${root}/${src}/source/"
-    rsync -a --exclude attic "${REPO_DIR}/patches/" "${root}/${src}/patches/"
+    # The public tree carries no patches directory (the attic stays private).
+    if [ -d "${REPO_DIR}/patches" ]; then
+        rsync -a --exclude attic "${REPO_DIR}/patches/" "${root}/${src}/patches/"
+    fi
     rsync -a "${REPO_DIR}/docker/" "${root}/${src}/docker/"
     install -m 0755 "${REPO_DIR}/build/builder.sh" "${root}/${src}/build/builder.sh"
     install -m 0644 "${REPO_DIR}/MANIFEST.md" "${REPO_DIR}/LICENSE" "${root}/${src}/"
