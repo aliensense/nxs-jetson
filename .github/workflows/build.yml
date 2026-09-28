@@ -1,0 +1,72 @@
+# The release build of the public tree: a tag named after the Jetson Linux
+# release this branch builds for (39.2.1) builds the package natively on an
+# arm64 runner in the branch's container and publishes it with the source
+# tarball and the checksums.
+name: Build
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    permissions:
+      contents: write
+
+    env:
+      TAG: ${{ github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate — the tag is this branch's Jetson Linux release
+        run: |
+          set -euo pipefail
+          l4t="$(sed -n 's/^L4T_VERSION="\(.*\)"/\1/p' build/builder.sh)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "$TAG" != "$l4t" ]; then
+            echo "::error::tag $TAG is not the L4T version this tree builds for ($l4t)"
+            exit 1
+          fi
+          echo "L4T=$l4t" >> "$GITHUB_ENV"
+
+      - name: Build the package in the branch's container
+        run: |
+          set -euo pipefail
+          docker volume create jetson-build-vol
+          docker build -t jetson-build docker/
+          docker run --rm -v jetson-build-vol:/build -v "$PWD":/repo jetson-build \
+            /repo/build/builder.sh -P -m -d -c -b
+          ls -l output/
+          test -f "output/nxs-jetson_${L4T}_arm64.deb"
+
+      - name: Inspect the package
+        run: |
+          set -euo pipefail
+          dpkg-deb --info "output/nxs-jetson_${L4T}_arm64.deb"
+          dpkg-deb --contents "output/nxs-jetson_${L4T}_arm64.deb"
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tar -czf "nxs-jetson-${TAG}-src.tar.gz" --exclude=.git --exclude=output .
+          sha256sum "output/nxs-jetson_${TAG}_arm64.deb" "nxs-jetson-${TAG}-src.tar.gz" > SHA256SUMS.txt
+          revision="${DEB_REVISION:-1}"
+          # The package's section of the changelog is the release body.
+          awk -v v="${TAG}-${revision}" '
+            /^## \[/ { on = index($0, "## [" v "]") == 1; next }
+            on { print }' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no [${TAG}-${revision}] section"; exit 1
+          fi
+          printf '\nInstall: `sudo apt install ./nxs-jetson_%s_arm64.deb`\n' "$TAG" >> notes.md
+          gh release create "$TAG" --title "nxs-jetson ${TAG}" \
+            --notes-file notes.md \
+            "output/nxs-jetson_${TAG}_arm64.deb" "nxs-jetson-${TAG}-src.tar.gz" SHA256SUMS.txt \
+            || gh release upload "$TAG" --clobber \
+              "output/nxs-jetson_${TAG}_arm64.deb" "nxs-jetson-${TAG}-src.tar.gz" SHA256SUMS.txt
