@@ -11,6 +11,8 @@ on:
 
 jobs:
   package:
+    # The public mirror builds; the private repository only exports.
+    if: github.repository == 'aliensense/nxs-jetson'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 300
     permissions:
