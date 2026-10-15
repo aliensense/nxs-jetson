@@ -50,6 +50,7 @@ source bundle inside it covers exactly those (RELEASING.md).
 ## Delta inventory (11 files under `source/`)
 
 - `nvidia-oot/drivers/media/i2c/universal_aliensense.c` — tegracam sensor with table-driven controls from the `aliensense-ctrl` node (binding: `docs/dt-bindings/aliensense,universal.md`); a node without the table behaves as the v1.0.0 stub
+- `nvidia-oot/drivers/media/i2c/nxs_csi2_tegra.c` — tegracam sensor for a head behind an NXS pod: every control a row of the unit's camera map, committed in one transaction (binding: `docs/dt-bindings/aliensense,nxs-csi2.md`)
 - `nvidia-oot/drivers/media/i2c/universal_aliensense_mode_tbls.h` — 8-mode frmfmt table (56 L)
 - `nvidia-oot/drivers/media/i2c/aliensense_generic_des.c` — probe-only dummy GMSL deserializer (174 L)
 - `nvidia-oot/drivers/media/i2c/Makefile` — + the two `obj-m` lines (9, 27)
