@@ -53,7 +53,7 @@ JOBS="${JOBS:-$(nproc)}"
 MOD_STAGE="${WORK_DIR}/mod-stage"
 DEB_PACKAGE="nxs-jetson"
 # A respin of one release bumps the revision; the file name and the tag stay.
-DEB_REVISION="${DEB_REVISION:-1}"
+DEB_REVISION="${DEB_REVISION:-2}"
 DEB_MAINTAINER="${DEB_MAINTAINER:-Aliensense <nxs@aliensense.com>}"
 
 log() { printf '\n== %s ==\n' "$*"; }

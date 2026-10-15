@@ -54,15 +54,16 @@ correctable). It sat untracked in the working tree from 2026-08-23 and was
 never part of the rig's proven state — the rig runs a stock-source
 `tegra-camera.ko` and delivers on both links. See the patch's README for the
 symptoms that would justify upstreaming it. The customer package therefore
-carries two modules and the DTBOs over stock JetPack modules, and the
+carries three modules and the DTBOs over stock JetPack modules, and the
 source bundle inside it covers exactly those (RELEASING.md).
 
-## Delta inventory (12 files under `source/`)
+## Delta inventory (13 files under `source/`)
 
 - `nvidia-oot/drivers/media/i2c/universal_aliensense.c` — tegracam sensor with table-driven controls from the `aliensense-ctrl` node (binding: `docs/dt-bindings/aliensense,universal.md`); a node without the table behaves as the v1.0.0 stub
-- `nvidia-oot/drivers/media/i2c/universal_aliensense_mode_tbls.h` — 8-mode frmfmt table (56 L)
+- `nvidia-oot/drivers/media/i2c/universal_aliensense_mode_tbls.h` — 8-mode frmfmt table (56 L), shared by both sensor drivers
+- `nvidia-oot/drivers/media/i2c/nxs_csi2_tegra.c` — tegracam sensor for a head behind an NXS pod: every control a field of the unit's camera face, committed in one transaction (binding: `docs/dt-bindings/aliensense,nxs-csi2.md`)
 - `nvidia-oot/drivers/media/i2c/aliensense_generic_des.c` — probe-only dummy GMSL deserializer (174 L)
-- `nvidia-oot/drivers/media/i2c/Makefile` — r39.2.1 stock plus the two `obj-m` lines (20, 37)
+- `nvidia-oot/drivers/media/i2c/Makefile` — r39.2.1 stock plus the three `obj-m` lines
 - `hardware/nvidia/t23x/nv-public/overlay/Makefile` — r39.2.1 stock plus 7 `dtbo-y` lines (79–85)
 - `hardware/nvidia/t23x/nv-public/overlay/tegra234-p3767-camera-p3768-aliensense_*.dts` — 7 overlays
   (general-mux foundation; cam0/cam1 × 2/4-lane universal overlays, each with both virtual channels; 2 GMSL patch overlays)
