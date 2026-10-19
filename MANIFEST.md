@@ -14,26 +14,24 @@
 
 | Field | Value |
 |---|---|
-| Built | 2026-09-17, container `jetson-build-r3921` (ubuntu:24.04) |
-| vermagic (both modules) | `6.8.12-1021-tegra SMP preempt mod_unload modversions aarch64` |
-| `universal_aliensense.ko` sha256 | `31254ff9f041fb133df16328990b3cd9a2d80f62e9195db9751e3d30884f3999` |
-| `aliensense_generic_des.ko` sha256 | `2a8e84d27802951684cac637296475a92a6a13fe415ef68c6d715834f2fbe91e` |
-| DTBOs | 7, all built; the offline `fdtoverlay` gate passes onto both base DTBs (PORTING.md gate 3) |
+| Built | 2026-10-15, container `jetson-build-r3921` (ubuntu:24.04) |
+| vermagic (all four modules) | `6.8.12-1021-tegra SMP preempt mod_unload modversions aarch64` |
+| `nxs-csi2-core.ko` sha256 | `21a5f34c3c3d964da31407e2aa598223dcba0cb21d69eb850339665379047945` |
+| `nxs-csi2-tegra.ko` sha256 | `396ce77074e96b9d4e5cfd1d03c01315911f968c2ef0a3e26bb5f7a40c56e16b` |
+| `aliensense_generic_des.ko` sha256 | `1f5b285f04ed806360477b614212b2e0d42510a08ccd706dcb35d7a153c52d99` |
+| `universal_aliensense.ko` sha256 | `54260c57407a7b0055ee8517767906abb9e6e76b5c2d13dacd605ba4015fa4a5` |
+| DTBOs | 3, all built; the offline `fdtoverlay` gate onto both base DTBs (PORTING.md gate 3) is pending for this build |
 
 ## Provenance
 
-The files under `source/` were extracted (via `git show`, no worktree copy)
+`aliensense_generic_des.c`, the three overlays and the two Makefiles descend
 from the RidgeRun delivery, commit `9a68f9154` ("feat: add extra dtbos"),
-on 2026-07-11. RidgeRun/GPL copyright headers are preserved inside the
-source files; the sensor driver descends from the FRAMOS Jetson sensor
-drivers (GPL-2.0), which its header records.
-
-**One deliberate deviation from the delivery:** the two dead
-`board_priv_pdata->gmsl` writes (`universal_aliensense.c`, gmsl-link probe
-block) are removed. The `gmsl` pdata field exists only in the attic'd
-`camera_common.h` patch — stock L4T headers reject the writes, and nothing
-in the tree ever read the field. All other files are byte-identical to the
-delivery commit.
+extracted on 2026-07-11 (via `git show`, no worktree copy); the RidgeRun/GPL
+copyright headers are preserved inside the files. `nxs-csi2-core.c`,
+`nxs-csi2-core.h` and `nxs-csi2-map.h` are Aliensense's, vendored byte for
+byte from the public `nxs-drivers` repository (the header generated from the
+map's one source in the `nxs` tool's tree). `nxs-csi2-tegra.c` is
+Aliensense's.
 
 Deliberately **not** carried over from that delivery (see
 `patches/attic/framos-framework-residue.patch` and its README):
@@ -54,16 +52,18 @@ correctable). It sat untracked in the working tree from 2026-08-23 and was
 never part of the rig's proven state — the rig runs a stock-source
 `tegra-camera.ko` and delivers on both links. See the patch's README for the
 symptoms that would justify upstreaming it. The customer package therefore
-carries three modules and the DTBOs over stock JetPack modules, and the
+carries four modules and the DTBOs over stock JetPack modules, and the
 source bundle inside it covers exactly those (RELEASING.md).
 
-## Delta inventory (13 files under `source/`)
+## Delta inventory (16 files under `source/`)
 
-- `nvidia-oot/drivers/media/i2c/universal_aliensense.c` — tegracam sensor with table-driven controls from the `aliensense-ctrl` node (binding: `docs/dt-bindings/aliensense,universal.md`); a node without the table behaves as the v1.0.0 stub
-- `nvidia-oot/drivers/media/i2c/universal_aliensense_mode_tbls.h` — 8-mode frmfmt table (56 L), shared by both sensor drivers
-- `nvidia-oot/drivers/media/i2c/nxs_csi2_tegra.c` — tegracam sensor for a head behind an NXS pod: every control a field of the unit's camera face, committed in one transaction (binding: `docs/dt-bindings/aliensense,nxs-csi2.md`)
-- `nvidia-oot/drivers/media/i2c/aliensense_generic_des.c` — probe-only dummy GMSL deserializer (174 L)
-- `nvidia-oot/drivers/media/i2c/Makefile` — r39.2.1 stock plus the three `obj-m` lines
-- `hardware/nvidia/t23x/nv-public/overlay/Makefile` — r39.2.1 stock plus 7 `dtbo-y` lines (79–85)
+- `nvidia-oot/drivers/media/i2c/nxs-csi2-core.c`, `nxs-csi2-core.h` — the NXS camera map's client, shared with the mainline `nxs-csi2` driver: the transfers, the commit windows, the rows, the mode table, the custom controls
+- `nvidia-oot/drivers/media/i2c/nxs-csi2-map.h` — the map's constants, generated from `constants/nxs_map.yaml` of the `nxs` tool's tree
+- `nvidia-oot/drivers/media/i2c/nxs-csi2-tegra.c` — the tegracam driver over the core: a head behind an NXS pod, or a smart camera; the frmfmt table from the mode nodes, gain, exposure and frame rate as commits in physical units (binding: `docs/dt-bindings/aliensense,nxs-csi2.md`)
+- `nvidia-oot/drivers/media/i2c/universal_aliensense.c` — tegracam sensor with table-driven controls from the `aliensense-ctrl` node, a head without a unit (binding: `docs/dt-bindings/aliensense,universal.md`); a node without the table behaves as the v1.0.0 stub
+- `nvidia-oot/drivers/media/i2c/universal_aliensense_mode_tbls.h` — the universal driver's 8-mode frmfmt table (56 L)
+- `nvidia-oot/drivers/media/i2c/aliensense_generic_des.c` — probe-only dummy GMSL deserializer (178 L)
+- `nvidia-oot/drivers/media/i2c/Makefile` — r39.2.1 stock plus the four `obj-m` lines
+- `hardware/nvidia/t23x/nv-public/overlay/Makefile` — r39.2.1 stock plus 7 `dtbo-y` lines
 - `hardware/nvidia/t23x/nv-public/overlay/tegra234-p3767-camera-p3768-aliensense_*.dts` — 7 overlays
-  (general-mux foundation; cam0/cam1 × 2/4-lane universal overlays, each with both virtual channels; 2 GMSL patch overlays)
+  (general-mux foundation; cam0/cam1 × 2/4-lane universal overlays, each with both virtual channels; 2 GMSL patch overlays). The per-port overlays of a port with a unit are the host tool's

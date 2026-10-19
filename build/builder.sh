@@ -52,8 +52,13 @@ CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 JOBS="${JOBS:-$(nproc)}"
 MOD_STAGE="${WORK_DIR}/mod-stage"
 DEB_PACKAGE="nxs-jetson"
-# A respin of one release bumps the revision; the file name and the tag stay.
-DEB_REVISION="${DEB_REVISION:-2}"
+# The package's version is the Jetson Linux release and the NXS version,
+# <l4t>+nxs<X.Y.Z>; the NXS version comes from the vendored map header,
+# generated from the NXS firmware's VERSION file, its one source.
+MAP_HEADER="${REPO_DIR}/source/nvidia-oot/drivers/media/i2c/nxs-csi2-map.h"
+NXS_VERSION="$(sed -n 's/^#define[[:space:]]\{1,\}NXS_VERSION[[:space:]]\{1,\}"\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)"$/\1/p' "${MAP_HEADER}")"
+[[ -n "${NXS_VERSION}" ]] || { echo "error: ${MAP_HEADER} carries no NXS_VERSION" >&2; exit 1; }
+DEB_VERSION="${L4T_VERSION}+nxs${NXS_VERSION}"
 DEB_MAINTAINER="${DEB_MAINTAINER:-Aliensense <nxs@aliensense.com>}"
 
 log() { printf '\n== %s ==\n' "$*"; }
@@ -133,7 +138,7 @@ prepare_sources() {
     # this branch must not survive in the cached work tree from an earlier build.
     find "${SRC_DIR}/nvidia-oot/drivers/media/i2c" \
          "${SRC_DIR}/hardware/nvidia/t23x/nv-public/overlay" \
-         -name '*aliensense*' -type f -delete 2>/dev/null || true
+         \( -name '*aliensense*' -o -name 'nxs-csi2*' -o -name 'nxs_csi2*' \) -type f -delete 2>/dev/null || true
     rsync -av "${REPO_DIR}/source/" "${SRC_DIR}/"
 }
 
@@ -294,14 +299,16 @@ deb() {
     echo "${L4T_VERSION}" > "${root}/${doc}/L4T"
     cat > "${root}/DEBIAN/control" <<DEBCTL
 Package: ${DEB_PACKAGE}
-Version: ${L4T_VERSION}-${DEB_REVISION}
+Version: ${DEB_VERSION}
 Architecture: arm64
 Section: kernel
 Priority: optional
 Maintainer: ${DEB_MAINTAINER}
 Depends: nvidia-l4t-kernel
-Description: NXS Hub camera modules and overlays for Jetson Linux ${L4T_VERSION}
- Two out-of-tree modules for kernel ${EXPECTED_UNAME} and the device tree
+Description: NXS camera modules and overlays for Jetson Linux ${L4T_VERSION}
+ Four out-of-tree modules for kernel ${EXPECTED_UNAME}: the NXS camera
+ map's core, its tegracam driver nxs-csi2-tegra, the universal driver of a
+ head without a unit, and the deserializer stub, with the device tree
  overlays of the NXS Hub's camera ports. The nxs host tool writes the boot
  entry that loads them.
 DEBCTL
