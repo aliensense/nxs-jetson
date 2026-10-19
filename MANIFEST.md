@@ -44,16 +44,18 @@ correctable). It sat untracked in the working tree from 2026-08-23 and was
 never part of the rig's proven state — the rig runs a stock-source
 `tegra-camera.ko` and delivers on both links. See the patch's README for the
 symptoms that would justify upstreaming it. The customer package therefore
-carries two modules and the DTBOs over stock JetPack modules, and the
+carries four modules and the DTBOs over stock JetPack modules, and the
 source bundle inside it covers exactly those (RELEASING.md).
 
-## Delta inventory (11 files under `source/`)
+## Delta inventory (16 files under `source/`)
 
-- `nvidia-oot/drivers/media/i2c/universal_aliensense.c` — tegracam sensor with table-driven controls from the `aliensense-ctrl` node (binding: `docs/dt-bindings/aliensense,universal.md`); a node without the table behaves as the v1.0.0 stub
-- `nvidia-oot/drivers/media/i2c/nxs_csi2_tegra.c` — tegracam sensor for a head behind an NXS pod: every control a row of the unit's camera map, committed in one transaction (binding: `docs/dt-bindings/aliensense,nxs-csi2.md`)
-- `nvidia-oot/drivers/media/i2c/universal_aliensense_mode_tbls.h` — 8-mode frmfmt table (56 L)
+- `nvidia-oot/drivers/media/i2c/nxs-csi2-core.c`, `nxs-csi2-core.h` — the NXS camera map's client, shared with the mainline `nxs-csi2` driver: the transfers, the commit windows, the rows, the mode table, the custom controls
+- `nvidia-oot/drivers/media/i2c/nxs-csi2-map.h` — the map's constants, generated from `constants/nxs_map.yaml` of the `nxs` tool's tree
+- `nvidia-oot/drivers/media/i2c/nxs-csi2-tegra.c` — the tegracam driver over the core: a head behind an NXS pod, or a smart camera; the frmfmt table from the mode nodes, gain, exposure and frame rate as commits in physical units (binding: `docs/dt-bindings/aliensense,nxs-csi2.md`)
 - `nvidia-oot/drivers/media/i2c/aliensense_generic_des.c` — probe-only dummy GMSL deserializer (174 L)
-- `nvidia-oot/drivers/media/i2c/Makefile` — + the two `obj-m` lines (9, 27)
+- `nvidia-oot/drivers/media/i2c/universal_aliensense.c` — tegracam sensor with table-driven controls from the `aliensense-ctrl` node, a head without a unit (binding: `docs/dt-bindings/aliensense,universal.md`)
+- `nvidia-oot/drivers/media/i2c/universal_aliensense_mode_tbls.h` — the universal driver's 8-mode frmfmt table (56 L)
+- `nvidia-oot/drivers/media/i2c/Makefile` — + the four `obj-m` lines
 - `hardware/nvidia/t23x/nv-public/overlay/Makefile` — + 7 `dtbo-y` lines (69–75)
 - `hardware/nvidia/t23x/nv-public/overlay/tegra234-p3767-camera-p3768-aliensense_*.dts` — 7 overlays
-  (general-mux foundation; cam0/cam1 × 2/4-lane universal overlays, each with both virtual channels; 2 GMSL patch overlays)
+  (general-mux foundation; cam0/cam1 × 2/4-lane universal overlays, each with both virtual channels; 2 GMSL patch overlays). The per-port overlays of a port with a unit are the host tool's

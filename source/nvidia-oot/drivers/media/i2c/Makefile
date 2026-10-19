@@ -25,7 +25,8 @@ obj-m += nv_ar0234.o
 obj-m += nv_hawk_owl.o
 obj-m += max929x.o
 obj-m += universal_aliensense.o
-obj-m += nxs_csi2_tegra.o
+obj-m += nxs-csi2-core.o
+obj-m += nxs-csi2-tegra.o
 endif
 
 obj-m += pca9570.o
