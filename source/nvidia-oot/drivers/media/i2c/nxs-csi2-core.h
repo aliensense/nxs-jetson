@@ -113,19 +113,36 @@ struct nxs_csi2_core {
 	u8 param_count;
 	u8 mode_count;
 	struct nxs_csi2_mode modes[NXS_MODE_TABLE_MAX];
+	/* The mode table's bytes as read: with the counts, the map's identity a re-read compares. */
+	u8 table[NXS_MODE_TABLE_MAX * NXS_MODE_ENTRY_SIZE];
 	struct nxs_csi2_row *rows;
+	/* The row of a control whose row a re-read map no longer carries: its core is NULL. */
+	struct nxs_csi2_row orphan;
 	/* A standard id's row index, -1 for none. */
 	s8 row_of[NXS_CSI2_ID_COUNT];
 	/* Row i's value for its next commit. */
 	u32 staged[NXS_MAX_ROWS];
-	/* The rows staged while the map was INERT, committed by nxs_csi2_core_commit_held(). */
+	/* The rows staged while the map was INERT or no session was open, committed by nxs_csi2_core_commit_held(). */
 	u64 held;
+	/*
+	 * A capture session is open on the link: the core commits. Otherwise a
+	 * control set waits in the held rows until the next session's start, so
+	 * the tool's bring-up of the port meets no commit of the driver's
+	 * (Interface Description §6.4, the phase rule).
+	 */
+	bool session;
 	/* The trigger conversion in effect, as the trigger row last read. */
 	u32 trigger_live;
 	/* LIVE or a range written into the core's controls: no commit. */
 	bool syncing;
 	u32 cid_base;
 };
+
+/* The adapter's session on the link: open at its stream start, closed at its stream stop. */
+static inline void nxs_csi2_core_session(struct nxs_csi2_core *core, bool open)
+{
+	core->session = open;
+}
 
 /* A row's value as a number, signed by the row's TYPE. */
 static inline s64 nxs_csi2_row_s64(const struct nxs_csi2_row *row, u32 v)
@@ -153,7 +170,7 @@ static inline void nxs_csi2_core_hold(struct nxs_csi2_core *core, u64 mask)
 	core->held |= mask;
 }
 
-bool nxs_csi2_core_busy(int err);
+bool nxs_csi2_core_unanswered(int err);
 const char *nxs_csi2_core_state_name(u8 state);
 u32 nxs_csi2_core_mbus_code(const struct nxs_csi2_mode *mode, u8 flips);
 
@@ -161,6 +178,8 @@ int nxs_csi2_core_init(struct nxs_csi2_core *core, struct i2c_client *client);
 int nxs_csi2_core_init_controls(struct nxs_csi2_core *core, struct v4l2_ctrl_handler *hdl,
 				u32 cid_base);
 int nxs_csi2_core_read_status(struct nxs_csi2_core *core, struct nxs_csi2_status *status);
+int nxs_csi2_core_changed(struct nxs_csi2_core *core, const struct nxs_csi2_status *status,
+			  bool *changed);
 int nxs_csi2_core_refresh(struct nxs_csi2_core *core);
 int nxs_csi2_core_read_range(struct nxs_csi2_core *core, unsigned int index);
 int nxs_csi2_core_read_live(struct nxs_csi2_core *core, unsigned int index);

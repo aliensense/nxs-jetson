@@ -4,6 +4,12 @@ All notable changes to the NXS kernel package for NVIDIA Jetson: the modules, th
 
 ## [Unreleased]
 
+### Changed
+- `nxs-csi2-core` commits only while a capture session is open on the link. A control set before that, tegracam's defaults at probe among them, waits in the held rows and lands at the session's start, so the host tool's bring-up of a port meets no commit of the driver's.
+
+### Fixed
+- `install.sh` keeps a per-port overlay the host tool wrote under the package's default name instead of replacing it with the package's own.
+
 ## [39.2.1+nxs1.2.0] - 2026-10-19
 
 ### Added

@@ -6,7 +6,7 @@
  *
  * One core for the two adapters: nxs-csi2, the V4L2 sub-device driver, and
  * nxs-csi2-tegra, the tegracam driver. The core knows the map and no sensor.
- * A pod's NXS unit, or a smart camera, serves the map at its camera door: a
+ * A pod, or a smart camera, serves the map at its camera door: a
  * flat map behind a 16-bit register pointer, high byte first, with the
  * header's capture fields, the value and the range in effect of each
  * parameter row, the staged cells, the commit block, the mode table and the
@@ -17,23 +17,26 @@
  * Description, chapters 3, 4, 6.4 and 12, and the drivers' sequence is
  * docs/bring-up/nxs-csi2-mainline.md in the redbrain tree.
  *
- * The windows (§6.4). The core reads STATE under the host bus lock before
- * every COMMIT, since a COMMIT written while BUSY or INERT is ignored, and
- * keeps the lock through the write until STATE leaves BUSY. After the write
- * it sends nothing for the time the map painted for the kind: APPLY_RUN_MS
- * after an apply, MODE_RUN_MS, GATE_RUN_MS or TRIGGER_RUN_MS after a run.
- * Then it reads STATE every APPLY_POLL_MS for APPLY_POLL_MAX_MS past the
- * painted time after an apply, and every MODE_POLL_MS for
- * MODE_SWITCH_TIMEOUT_MS after a run, a NAK read as busy. Outside a window
- * a NAK is the device inside one of its own transfers: the transfer repeats
- * after BUSY_RETRY_MS, BUSY_RETRIES times.
+ * The windows (§6.4). The core reads STATE once under the host bus lock
+ * before every COMMIT, since a COMMIT written while BUSY or INERT is
+ * ignored, and keeps the lock through the write until it has read STATE
+ * past the device's bound. After the write it sends nothing for the bound
+ * the map painted for the kind: APPLY_RUN_MS after an apply, MODE_RUN_MS,
+ * GATE_RUN_MS or TRIGGER_RUN_MS after a run. Then it reads STATE once, and
+ * once more BOUND_LATENESS_MS later while the run still ends; BUSY past
+ * that is the device's failure. Every transfer is one try: the device
+ * answers outside its bound, so a NAK is a silent address or a fault. The
+ * core commits only while the adapter has a capture session open on the
+ * link (nxs_csi2_core_session):
+ * the host's tool brings the port up and joins its links while no session
+ * is open, and a control set meanwhile, tegracam's defaults at probe among
+ * them, waits in the held rows for the session's start.
  */
 
 #include <linux/bitops.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
 #include <linux/i2c.h>
-#include <linux/ktime.h>
 #include <linux/media-bus-format.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -83,19 +86,21 @@ static void nxs_put_le32(u8 *p, u32 v)
 	p[3] = (v >> 24) & 0xff;
 }
 
-/* ---- the map, with the busy retry ------------------------------------ */
+/* ---- the map ----------------------------------------------------------- */
 
-/* A NAK is the device inside one of its own transfers, EAGAIN a lost arbitration. */
-bool nxs_csi2_core_busy(int err)
+/* A NAK or a lost arbitration: the map at the address did not answer. */
+bool nxs_csi2_core_unanswered(int err)
 {
 	return err == -ENXIO || err == -EREMOTEIO || err == -EIO || err == -EAGAIN;
 }
-EXPORT_SYMBOL_GPL(nxs_csi2_core_busy);
+EXPORT_SYMBOL_GPL(nxs_csi2_core_unanswered);
 
 /*
- * One transfer: the 2-byte register pointer and the bytes written, or the
- * pointer and a read under a repeated start. @locked is a transfer under the
- * caller's bus lock, a commit's window; otherwise the adapter locks.
+ * One transfer, one try: the 2-byte register pointer and the bytes written,
+ * or the pointer and a read under a repeated start. @locked is a transfer
+ * under the caller's bus lock, a commit's window; otherwise the adapter
+ * locks. The device answers outside its bound, so a NAK is a silent address
+ * or a fault.
  */
 static int nxs_core_xfer(struct i2c_client *client, bool locked, u16 reg, const u8 *wbuf,
 			 size_t wlen, u8 *rbuf, size_t rlen)
@@ -106,8 +111,7 @@ static int nxs_core_xfer(struct i2c_client *client, bool locked, u16 reg, const 
 		{ .addr = client->addr, .flags = I2C_M_RD, .len = rlen, .buf = rbuf },
 	};
 	int n = rlen ? 2 : 1;
-	int err = 0;
-	int i;
+	int err;
 
 	if (wlen > NXS_CORE_COMMIT_MAX)
 		return -EINVAL;
@@ -115,19 +119,11 @@ static int nxs_core_xfer(struct i2c_client *client, bool locked, u16 reg, const 
 	out[1] = reg & 0xff;
 	if (wlen)
 		memcpy(out + 2, wbuf, wlen);
-	for (i = 0; i < NXS_BUSY_RETRIES; i++) {
-		err = locked ? __i2c_transfer(client->adapter, msgs, n) :
-			       i2c_transfer(client->adapter, msgs, n);
-		if (err == n)
-			return 0;
-		if (err >= 0)
-			err = -EIO;
-		if (!nxs_csi2_core_busy(err))
-			return err;
-		usleep_range(NXS_BUSY_RETRY_MS * 1000, NXS_BUSY_RETRY_MS * 1000 + 500);
-	}
+	err = locked ? __i2c_transfer(client->adapter, msgs, n) : i2c_transfer(client->adapter, msgs, n);
+	if (err == n)
+		return 0;
 
-	return err;
+	return err >= 0 ? -EIO : err;
 }
 
 static int nxs_core_read(struct nxs_csi2_core *core, u16 reg, u8 *buf, size_t len)
@@ -136,29 +132,17 @@ static int nxs_core_read(struct nxs_csi2_core *core, u16 reg, u8 *buf, size_t le
 }
 
 /*
- * STATE under the bus lock. A value outside the four, or a terminal state
- * the next read does not repeat, is a read the device's own transaction
- * tore, so it counts as busy.
+ * STATE under the bus lock, one read. The wire is idle when the core reads,
+ * so a value outside the four is the device's fault, never a torn read.
  */
 static int nxs_core_state(struct i2c_client *client, u8 *state)
 {
-	u8 first = 0;
-	u8 second = 0;
-	int err;
+	int err = nxs_core_xfer(client, true, NXS_MAP_REG_STATE, NULL, 0, state, 1);
 
-	err = nxs_core_xfer(client, true, NXS_MAP_REG_STATE, NULL, 0, &first, 1);
 	if (err)
 		return err;
-	if (first > NXS_MAP_STATE_FAULT || first == NXS_MAP_STATE_BUSY) {
-		*state = NXS_MAP_STATE_BUSY;
-		return 0;
-	}
-	err = nxs_core_xfer(client, true, NXS_MAP_REG_STATE, NULL, 0, &second, 1);
-	if (err)
-		return err;
-	*state = first == second ? first : NXS_MAP_STATE_BUSY;
 
-	return 0;
+	return *state > NXS_MAP_STATE_FAULT ? -EBADMSG : 0;
 }
 
 const char *nxs_csi2_core_state_name(u8 state)
@@ -181,9 +165,8 @@ EXPORT_SYMBOL_GPL(nxs_csi2_core_state_name);
 static const char *nxs_core_module_kind_name(u8 kind)
 {
 	switch (kind) {
-	case NXS_MODULE_KIND_UNIT:
-		return "a unit";
 	case NXS_MODULE_KIND_POD:
+	case NXS_MODULE_KIND_HEADED:
 		return "a pod";
 	case NXS_MODULE_KIND_SMART_CAMERA:
 		return "a smart camera";
@@ -196,81 +179,54 @@ static const char *nxs_core_module_kind_name(u8 kind)
 
 /* ---- the windows ----------------------------------------------------- */
 
-/* The polls of a window: a run's every MODE_POLL_MS, an apply's every APPLY_POLL_MS. */
-static void nxs_core_pause(bool run)
-{
-	if (run)
-		msleep(NXS_MODE_POLL_MS);
-	else
-		usleep_range(NXS_APPLY_POLL_MS * 1000, NXS_APPLY_POLL_MS * 1000 + 100);
-}
-
-static ktime_t nxs_core_deadline(bool run)
-{
-	return ktime_add_ms(ktime_get(), run ? NXS_MODE_SWITCH_TIMEOUT_MS : NXS_APPLY_POLL_MAX_MS);
-}
-
 /*
- * A run already in flight, a tool's commit or a mode switch, ends before a
- * commit starts, since a COMMIT written while BUSY is ignored. STATE is read
- * under the host bus lock, and the lock is kept once the map reads READY or
+ * A COMMIT written while BUSY or INERT is ignored, so STATE is read once
+ * under the host bus lock. The lock is kept once the map reads READY or
  * FAULT, so no host transfer lands between the check and the commit. A map
- * that reads INERT returns NXS_CSI2_INERT with the lock released.
+ * under a run in flight returns -EBUSY and one that reads INERT
+ * NXS_CSI2_INERT, both with the lock released.
  */
-static int nxs_core_idle(struct i2c_client *client, bool run)
+static int nxs_core_idle(struct i2c_client *client)
 {
-	ktime_t deadline = nxs_core_deadline(run);
 	u8 state;
 	int err;
 
-	for (;;) {
-		i2c_lock_bus(client->adapter, I2C_LOCK_SEGMENT);
-		err = nxs_core_state(client, &state);
-		if (!err && state != NXS_MAP_STATE_BUSY) {
-			if (state != NXS_MAP_STATE_INERT)
-				return 0;
-			err = NXS_CSI2_INERT;
-		}
+	i2c_lock_bus(client->adapter, I2C_LOCK_SEGMENT);
+	err = nxs_core_state(client, &state);
+	if (!err && state == NXS_MAP_STATE_BUSY)
+		err = -EBUSY;
+	else if (!err && state == NXS_MAP_STATE_INERT)
+		err = NXS_CSI2_INERT;
+	if (err)
 		i2c_unlock_bus(client->adapter, I2C_LOCK_SEGMENT);
-		if (err && !nxs_csi2_core_busy(err))
-			return err;
-		if (!ktime_before(ktime_get(), deadline))
-			return err ? err : -EBUSY;
-		nxs_core_pause(run);
-	}
+
+	return err;
 }
 
 /*
- * The window after a COMMIT, the bus held. The host first waits the time
- * the map painted for the kind and sends nothing, so no read of its own
- * lands on the device's transactions. Then it polls STATE. A NAK inside the
- * window is the device's own transfer, so it reads as busy.
+ * The window after a COMMIT, the bus held. The host waits the bound the
+ * map painted for the kind and sends nothing, then reads STATE once. A run
+ * ends within BOUND_LATENESS_MS of its deadline, so a BUSY read is read
+ * once more after that; BUSY past it stands.
  */
-static int nxs_core_settle(struct i2c_client *client, bool run, u16 wait_ms, u8 *state)
+static int nxs_core_settle(struct i2c_client *client, u16 wait_ms, u8 *state)
 {
-	ktime_t deadline;
 	int err;
 
-	if (run)
-		msleep(min_t(u16, wait_ms, NXS_MODE_SWITCH_TIMEOUT_MS));
-	else if (wait_ms >= 20)
+	if (wait_ms >= 20)
 		msleep(wait_ms);
-	else
+	else if (wait_ms)
 		usleep_range(wait_ms * 1000, wait_ms * 1000 + 200);
-	deadline = nxs_core_deadline(run);
-	for (;;) {
+	err = nxs_core_state(client, state);
+	if (!err && *state == NXS_MAP_STATE_BUSY) {
+		usleep_range(NXS_BOUND_LATENESS_MS * 1000, NXS_BOUND_LATENESS_MS * 1000 + 200);
 		err = nxs_core_state(client, state);
-		if (nxs_csi2_core_busy(err)) {
-			err = 0;
-			*state = NXS_MAP_STATE_BUSY;
-		}
-		if (err || *state != NXS_MAP_STATE_BUSY || !ktime_before(ktime_get(), deadline))
-			return err;
-		nxs_core_pause(run);
 	}
+
+	return err;
 }
 
-/* The cell that holds how long the last commit of a kind took. */
+/* The cell that holds the bound of a commit of a kind. */
 static u16 nxs_core_wait_cell(u8 kind)
 {
 	switch (kind) {
@@ -305,6 +261,8 @@ static int nxs_core_errno(u8 error)
 		return -EBADF;
 	case NXS_DEV_EAGAIN:
 		return -EAGAIN;
+	case NXS_DEV_ETIME:
+		return -ETIME;
 	case NXS_DEV_EFAULT:
 		return -EFAULT;
 	case NXS_DEV_EBUSY:
@@ -347,16 +305,15 @@ static int nxs_core_errno(u8 error)
  * One commit: the staged cells from the highest row of @mask down to row 0,
  * MASK and COMMIT in one write, so a transfer the bus cuts never applies.
  * Every row of @mask shares @kind. The host bus stays held from the STATE
- * check before the write until STATE leaves BUSY. The time the map painted
- * for the kind is read before the write, APPLY_RUN_MS_FLOOR at least for an
- * apply. Returns NXS_CSI2_INERT when the map has not configured its sensor
- * and nothing was written.
+ * check before the write until the read past the device's bound. The bound
+ * the map painted for the kind is read before the write. Returns
+ * NXS_CSI2_INERT when the map has not configured its sensor and nothing
+ * was written, -EBUSY under a run in flight.
  */
 static int nxs_core_commit_one(struct nxs_csi2_core *core, u64 mask, u8 kind, const char *what)
 {
 	struct i2c_client *client = core->client;
 	struct device *dev = &client->dev;
-	bool run = kind != NXS_PARAM_KIND_APPLY;
 	u8 buf[NXS_CORE_COMMIT_MAX];
 	u8 ms[NXS_MAP_REG_APPLY_RUN_MS_LEN] = { 0, 0 };
 	u8 state = NXS_MAP_STATE_BUSY;
@@ -378,17 +335,15 @@ static int nxs_core_commit_one(struct nxs_csi2_core *core, u64 mask, u8 kind, co
 	buf[len + NXS_MAP_REG_MASK_LEN] = 1;
 	len += NXS_MAP_REG_MASK_LEN + 1;
 
-	err = nxs_core_idle(client, run);
+	err = nxs_core_idle(client);
 	if (err)
 		return err;
-	wait_ms = run ? 0 : NXS_APPLY_RUN_MS_FLOOR;
+	wait_ms = 0;
 	if (!nxs_core_xfer(client, true, nxs_core_wait_cell(kind), NULL, 0, ms, sizeof(ms)))
 		wait_ms = nxs_le16(ms);
-	if (!run && wait_ms < NXS_APPLY_RUN_MS_FLOOR)
-		wait_ms = NXS_APPLY_RUN_MS_FLOOR;
 	err = nxs_core_xfer(client, true, NXS_MAP_REG_MASK - 4 * (hi + 1), buf, len, NULL, 0);
 	if (!err)
-		err = nxs_core_settle(client, run, wait_ms, &state);
+		err = nxs_core_settle(client, wait_ms, &state);
 	if (!err && state == NXS_MAP_STATE_FAULT)
 		err = nxs_core_xfer(client, true, NXS_MAP_REG_ERROR, NULL, 0, &error, 1);
 	i2c_unlock_bus(client->adapter, I2C_LOCK_SEGMENT);
@@ -406,7 +361,7 @@ static int nxs_core_commit_one(struct nxs_csi2_core *core, u64 mask, u8 kind, co
 				     what, error);
 		return nxs_core_errno(error);
 	default:
-		dev_warn_ratelimited(dev, "%s: the camera map stayed busy\n", what);
+		dev_warn_ratelimited(dev, "%s: the camera map stayed busy past its painted bound\n", what);
 		return -EBUSY;
 	}
 }
@@ -567,7 +522,7 @@ EXPORT_SYMBOL_GPL(nxs_csi2_core_mbus_code);
 /* The mode table, MODE_COUNT rows, as the map serves it. */
 static int nxs_core_read_modes(struct nxs_csi2_core *core)
 {
-	u8 table[NXS_MODE_TABLE_MAX * NXS_MODE_ENTRY_SIZE];
+	u8 *table = core->table;
 	unsigned int i;
 	int err;
 
@@ -897,6 +852,10 @@ int nxs_csi2_core_commit(struct nxs_csi2_core *core, u64 mask, const char *what)
 
 	if (!mask)
 		return 0;
+	if (!core->session) {
+		core->held |= mask;
+		return 0;
+	}
 	err = nxs_core_drop_pulse_rows(core, &mask);
 	if (err)
 		return err;
@@ -964,6 +923,32 @@ int nxs_csi2_core_read_status(struct nxs_csi2_core *core, struct nxs_csi2_status
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nxs_csi2_core_read_status);
+
+/*
+ * Whether the map differs from the one the core read: another personality
+ * uploaded into the pod behind the door changes its row count, its mode
+ * count or its mode table's bytes. `status` is the header just read; the
+ * table is read again only where the counts agree.
+ */
+int nxs_csi2_core_changed(struct nxs_csi2_core *core, const struct nxs_csi2_status *status,
+			  bool *changed)
+{
+	u8 table[NXS_MODE_TABLE_MAX * NXS_MODE_ENTRY_SIZE];
+	size_t len = core->mode_count * NXS_MODE_ENTRY_SIZE;
+	int err;
+
+	*changed = status->param_count != core->param_count ||
+		   status->mode_count != core->mode_count;
+	if (*changed || !len)
+		return 0;
+	err = nxs_core_read(core, NXS_MAP_REG_MODE_TABLE, table, len);
+	if (err)
+		return err;
+	*changed = memcmp(table, core->table, len) != 0;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(nxs_csi2_core_changed);
 
 /*
  * The stream gate: a GATE commit of the STREAM row, which starts or parks
@@ -1061,8 +1046,8 @@ static int nxs_core_s_ctrl(struct v4l2_ctrl *ctrl)
 	struct nxs_csi2_core *core = row->core;
 	int err;
 
-	/* The handler's lock is the adapter's, held by the framework. */
-	if (core->syncing)
+	/* The handler's lock is the adapter's, held by the framework. A control whose row left the map sets nothing. */
+	if (!core || core->syncing)
 		return 0;
 	nxs_csi2_core_stage(core, row->index, nxs_core_row_value(row));
 	err = nxs_csi2_core_commit(core, BIT_ULL(row->index), ctrl->name);
@@ -1078,6 +1063,8 @@ static int nxs_core_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 	s64 val;
 	int err;
 
+	if (!row->core)
+		return 0;
 	err = nxs_csi2_core_read_live(row->core, row->index);
 	if (err)
 		return err;
@@ -1277,7 +1264,7 @@ EXPORT_SYMBOL_GPL(nxs_csi2_core_init_controls);
 /*
  * The header's capture fields, the mode table, the rows, their ranges and
  * their values in effect. Nothing is written. A map that does not answer
- * returns the bus error, which nxs_csi2_core_busy() tells; a map that is
+ * returns the bus error, which nxs_csi2_core_unanswered() tells; a map that is
  * not a camera door of the layout this core knows returns -ENODEV; a map
  * that serves no mode yet, a pod whose camera personality has not loaded,
  * returns -ENOENT. The modes stand as the map serves them: the adapter
@@ -1299,7 +1286,7 @@ int nxs_csi2_core_init(struct nxs_csi2_core *core, struct i2c_client *client)
 	if (boot[NXS_MAP_REG_MAP_ID] != NXS_MAP_ID_CAMERA) {
 		dev_err(dev, "no camera map at 0x%02x: id 0x%02x%s\n", client->addr,
 			boot[NXS_MAP_REG_MAP_ID],
-			boot[NXS_MAP_REG_MAP_ID] == NXS_MAP_ID_UNIT ? ", the unit door" : "");
+			boot[NXS_MAP_REG_MAP_ID] == NXS_MAP_ID_POD ? ", the pod door" : "");
 		return -ENODEV;
 	}
 	if (boot[NXS_MAP_REG_MAP_VERSION] != NXS_MAP_VERSION_VALUE) {

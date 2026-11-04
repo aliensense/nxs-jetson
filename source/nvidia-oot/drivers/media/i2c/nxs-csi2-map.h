@@ -12,21 +12,21 @@
 #define NXS_CSI2_MAP_H
 
 /* The product version, MAJOR.MINOR.PATCH, this header belongs to. */
-#define NXS_VERSION	"1.2.0"
+#define NXS_VERSION	"1.3.0"
 
 /*
- * MapReg: The NXS map, one layout at the unit door and the camera door,
+ * MapReg: The NXS map, one layout at the pod door and the camera door,
  * 16-bit register pointer.
  */
 /*
  * The cells the camera door serves, where a kernel driver is bound: the
  * header's capture fields, the cell arrays, the commit block, the mode
- * table and the rows. Every other cell of the map is the unit's and reads 0
+ * table and the rows. Every other cell of the map is the pod's and reads 0
  * here.
  */
 /*
- * `MAP_ID_UNIT` at the unit door, `MAP_ID_CAMERA` at the camera door and on
- * a smart camera.
+ * `MAP_ID_POD` at the pod door, `MAP_ID_CAMERA` at the camera door and on a
+ * smart camera.
  */
 #define NXS_MAP_REG_MAP_ID	0x0000
 /* Layout version of this map, `MAP_VERSION_VALUE`. */
@@ -41,7 +41,7 @@
  * numbering, 0 otherwise. The next accepted `COMMIT` clears it.
  */
 #define NXS_MAP_REG_ERROR	0x0003
-/* The running firmware's major version; 0 on a smart camera. */
+/* The running firmware's major version, a smart camera's bitstream version. */
 #define NXS_MAP_REG_FW_VERSION_MAJOR	0x0004
 #define NXS_MAP_REG_FW_VERSION_MINOR	0x0005
 /*
@@ -50,8 +50,8 @@
  */
 #define NXS_MAP_REG_PARAM_COUNT	0x0006
 /*
- * Rows in the mode table, at most `MODE_TABLE_MAX`; 0 on a unit that runs
- * no camera personality.
+ * Rows in the mode table, at most `MODE_TABLE_MAX`; 0 on a pod that runs no
+ * camera personality.
  */
 #define NXS_MAP_REG_MODE_COUNT	0x0007
 /* The mode-table value in effect, 0xFF before the first run. */
@@ -59,7 +59,7 @@
 /*
  * 0 standby, 1 streaming or sampling: the `STREAM` row of the camera
  * personality at the camera door, and of the camera personality when one
- * runs, else the sampling personality, at the unit door.
+ * runs, else the sampling personality, at the pod door.
  */
 #define NXS_MAP_REG_STREAM	0x0009
 /*
@@ -70,33 +70,36 @@
 /* Wrapping count of commits that ended FAULT. */
 #define NXS_MAP_REG_FAULT_COUNT	0x000B
 /*
- * u16 LE milliseconds: how long the last RUN commit through this door took,
- * 0 before the device completed one. The host waits this long after a RUN
- * commit before its first `STATE` read.
+ * u16 LE milliseconds: the bound of a RUN commit, the longest its run
+ * takes, 0 while no cam personality is loaded. The host waits this long
+ * after a RUN commit before its first `STATE` read.
  */
 #define NXS_MAP_REG_MODE_RUN_MS	0x0010
 #define NXS_MAP_REG_MODE_RUN_MS_LEN	2
-/* u16 LE milliseconds: how long the last run of kind GATE took. */
+/* u16 LE milliseconds: the bound of a GATE commit. */
 #define NXS_MAP_REG_GATE_RUN_MS	0x0012
 #define NXS_MAP_REG_GATE_RUN_MS_LEN	2
-/* u16 LE milliseconds: how long the last run of kind TRIGGER took. */
+/* u16 LE milliseconds: the bound of a TRIGGER commit. */
 #define NXS_MAP_REG_TRIGGER_RUN_MS	0x0014
 #define NXS_MAP_REG_TRIGGER_RUN_MS_LEN	2
 /*
- * u16 LE milliseconds: how long the last APPLY commit took from the
- * `COMMIT` byte to READY, `APPLY_RUN_MS_FLOOR` before the device completed
- * one. The host keeps the bus and sends nothing for this long after an
+ * u16 LE milliseconds: the bound of an APPLY commit from the `COMMIT` byte
+ * to READY. The host keeps the bus and sends nothing for this long after an
  * APPLY commit, then reads `STATE`.
  */
 #define NXS_MAP_REG_APPLY_RUN_MS	0x0016
 #define NXS_MAP_REG_APPLY_RUN_MS_LEN	2
-/* `ModuleKind`: what the device is, so a tool tells a pod from a hat. */
+/*
+ * `ModuleKind`: what the device is, so a tool tells a pod from a smart
+ * camera or a smart module. A pod with a head reads `POD` too.
+ */
 #define NXS_MAP_REG_MODULE_KIND	0x0018
 /*
  * `PROTO_VERSION_VALUE`, the version of this host interface. At 0x19 so a
  * tool of the first interface reads it through a 1-byte pointer.
  */
 #define NXS_MAP_REG_PROTO_VERSION	0x0019
+#define NXS_MAP_REG_FW_VERSION_PATCH	0x001F
 /*
  * `MAX_ROWS` u32 LE cells: the value of row i in effect, in the row's unit,
  * repainted after every commit and run.
@@ -153,6 +156,21 @@
  */
 #define NXS_MAP_REG_ROWS	0x0800
 #define NXS_MAP_REG_ROWS_LEN	4096
+/*
+ * The device's serial, 12 bytes MSB first: the chip's UID96 on a pod, a
+ * smart camera's own serial NUL-padded.
+ */
+#define NXS_MAP_REG_SERIAL	0x1C00
+#define NXS_MAP_REG_SERIAL_LEN	12
+/*
+ * `STORE_SLOTS` regions of `PERSONALITY_INFO_SIZE` bytes, slot k at
+ * `PERSONALITY_INFO + PERSONALITY_INFO_SIZE k`: the stored image's trailer
+ * records, served from flash. At the camera door the first region serves
+ * the camera personality's trailer, the block's description, and the other
+ * regions read 0; a smart camera serves its own description there.
+ */
+#define NXS_MAP_REG_PERSONALITY_INFO	0x8000
+#define NXS_MAP_REG_PERSONALITY_INFO_LEN	32768
 
 /* MapState: `MapReg::STATE` values. */
 /*
@@ -163,8 +181,8 @@
 /* Configured and no commit in flight. */
 #define NXS_MAP_STATE_READY	1
 /*
- * A commit runs and the device masters its own bus. A transaction that
- * lands inside it reads a NAK, which a host reads as BUSY.
+ * A commit runs and the device masters its own bus. The host sends nothing
+ * until the painted bound has passed.
  */
 #define NXS_MAP_STATE_BUSY	2
 /*
@@ -177,15 +195,26 @@
  * ModuleKind: `MapReg::MODULE_KIND` values: what the device is, with the
  * ports a device of that kind has as (name, PortType, PortDirection).
  */
-/* An NXS unit with a mikroBUS socket and no camera head. */
-#define NXS_MODULE_KIND_UNIT	1
-/* An NXS unit in a camera pod: a head on its pod bus and a mikroBUS socket. */
-#define NXS_MODULE_KIND_POD	2
-/* A camera that serves the capture cells from its own logic, an FPGA head. */
+/*
+ * An NXS pod with a mikroBUS socket, a camera head or none: the one kind,
+ * with a head or without one.
+ */
+#define NXS_MODULE_KIND_POD	1
+/*
+ * The 1.2.0 firmware's byte for a pod carrying a head; a reader takes it as
+ * `POD`, with the same ports, so a 1.2.0 pod still reads.
+ */
+#define NXS_MODULE_KIND_HEADED	2
+/*
+ * A camera that serves the capture cells and its own description from its
+ * own logic, an FPGA head, on a connector or on a hub's link.
+ */
 #define NXS_MODULE_KIND_SMART_CAMERA	3
 /*
- * A compute module that serves this map and consumes the hub's streams, the
- * N6 hat.
+ * A compute module that serves this map, consumes the hub's streams and may
+ * own the hub's bus, the N6 hat. Its `i2c1` is the hub's bus: fed by the
+ * node that owns the hub, or the source of the hub's `i2c` input when the
+ * module owns it.
  */
 #define NXS_MODULE_KIND_SMART_MODULE	4
 
@@ -265,8 +294,8 @@
  */
 #define NXS_PARAM_ID_MOUNT_ORIENTATION	18
 /*
- * A device row: the unit's Cyphal node id, 0..125 static or 255 anonymous.
- * A commit stages it, `Cmd::STORE_PERSIST` keeps it and the next boot runs
+ * A device row: the pod's Cyphal node id, 0..125 static or 255 anonymous. A
+ * commit stages it, `Cmd::STORE_PERSIST` keeps it and the next boot runs
  * it; kind APPLY.
  */
 #define NXS_PARAM_ID_CAN_NODE_ID	19
@@ -423,8 +452,8 @@
  * The constants of the map a driver reads: the identity bytes, the sizes
  * and limits, the row and mode bits, the apply and busy contract.
  */
-/* `MapReg::MAP_ID` at the unit door. */
-#define NXS_MAP_ID_UNIT	0xAB
+/* `MapReg::MAP_ID` at the pod door. */
+#define NXS_MAP_ID_POD	0xAB
 /* `MapReg::MAP_ID` at the camera door and on a smart camera. */
 #define NXS_MAP_ID_CAMERA	0xC4
 /* The layout version this file describes. */
@@ -470,38 +499,12 @@
 #define NXS_FLIP_Y	0x02
 #define NXS_TEMPERATURE_NONE	0x80000000
 /*
- * `MapReg::APPLY_RUN_MS` before the device completed an apply: the longest
- * a pod's apply takes under no contention.
+ * How late past its bound a run can still be on the device's bus, the
+ * transfer in flight at the deadline, a 128-byte burst at 400 kHz rounded
+ * up. The device paints each kind's bound plus this, and a host that reads
+ * `STATE` BUSY after the painted time reads it once more after this long.
  */
-#define NXS_APPLY_RUN_MS_FLOOR	4
-/*
- * Interval of the host's `STATE` reads after the painted apply time, the
- * host bus held, a NAK read as busy.
- */
-#define NXS_APPLY_POLL_MS	1
-/*
- * Longest the host polls past the painted apply time before it reports the
- * device busy and releases the host bus.
- */
-#define NXS_APPLY_POLL_MAX_MS	20
-/*
- * Interval of the host's `STATE` reads after a RUN, GATE or TRIGGER commit,
- * once the painted run time has passed, the host bus held, a NAK read as
- * busy.
- */
-#define NXS_MODE_POLL_MS	10
-/*
- * Longest the host polls after a RUN, GATE or TRIGGER commit before it
- * reports the device busy.
- */
-#define NXS_MODE_SWITCH_TIMEOUT_MS	6000
-/*
- * Wait before a host repeats a transaction the device did not acknowledge
- * outside a commit window.
- */
-#define NXS_BUSY_RETRY_MS	1
-/* Repeats of such a transaction before the host reports the device busy. */
-#define NXS_BUSY_RETRIES	8
+#define NXS_BOUND_LATENESS_MS	5
 
 /*
  * The device's errno numbering, what the ERROR cell carries after a commit
@@ -524,6 +527,7 @@
 #define NXS_DEV_ENOSPC	28
 #define NXS_DEV_ERANGE	34
 #define NXS_DEV_ENODATA	61
+#define NXS_DEV_ETIME	62
 #define NXS_DEV_EPROTO	71
 #define NXS_DEV_EBADMSG	77
 #define NXS_DEV_EOPNOTSUPP	95

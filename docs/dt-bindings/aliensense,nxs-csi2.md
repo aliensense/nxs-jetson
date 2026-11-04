@@ -39,7 +39,7 @@ width and no control table: the device holds the sensor's laws.
 |---|---|---|
 | `aliensense,passive` | boolean | The stream reaches this host while another host owns the hub's control bus. The driver never transfers on I²C, builds its formats from the mode nodes, creates no row control, and a session changes nothing on the device |
 
-The host tool generates the node (`nxs switch`) from the personality the
+The host tool generates the node (`nxs compose`) from the personality the
 device carries. The mode nodes are the personality's mode table, and the
 map serves the same table: at the first session the map answers, the
 driver checks every mode node against the map's rows by width, height and
@@ -76,6 +76,8 @@ The stream gate is the host tool's: `nxs <port> on` starts the sensor and
 `off` parks it, so a capture session commits no `STREAM` row.
 
 ## The commit
+
+The driver commits only while a capture session is open on the node's link. A control set with no session open, tegracam's defaults at probe among them, is held and committed at the next session's start (the Interface Description's phase rule, §6.4).
 
 A commit is one write from the staged cell of the highest row it names
 through `MASK` and `COMMIT`. The driver reads `STATE` under the host bus
