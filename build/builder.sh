@@ -233,7 +233,7 @@ ports, built for kernel \`${EXPECTED_UNAME}\` over stock JetPack.
     orin\$ sudo ./install.sh         install modules + DTBOs (depmod)
     orin\$ sudo ./install.sh --rollback
 
-Then write the boot entry, with \`nxs compose <port> --install --select\`
+Then write the boot entry, with \`nxs compose\`
 or by pasting the block from the Deployment Reference (DEPLOY.md §5), and
 reboot. Camera control lives in userspace (the \`nxs\` tool and its
 descriptor packs); these modules only make the ports appear.
