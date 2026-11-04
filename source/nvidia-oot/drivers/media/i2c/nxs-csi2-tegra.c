@@ -36,7 +36,7 @@
 #include "nxs-csi2-core.h"
 
 /*
- * The driver knows no sensor. A pod's NXS unit, or a smart camera, serves
+ * The driver knows no sensor. A pod, or a smart camera, serves
  * the camera map, and nxs-csi2-core reads it, commits its rows and offers
  * the rows the framework does not map as custom controls. This adapter is
  * tegracam's: the gain, exposure and frame-rate callbacks commit the rows
@@ -230,11 +230,11 @@ static const struct nxs_csi2_mode *nxs_map_mode(struct nxs_csi2_tegra *priv,
 }
 
 /*
- * The tree's modes against the map's: every mode node names a row of the
- * map, since the overlay generator writes both from one personality. A
- * mode the map does not serve refuses the session with the line that says
- * what to regenerate; a rate past the map's, and a count that differs, are
- * logged.
+ * The tree's modes against the map's: the tree carries the port's pool,
+ * every camera the port may boot, and the map the one camera behind this
+ * door. A mode the map does not serve belongs to another camera of the
+ * pool and is logged; the session's own mode is checked where the session
+ * opens. A rate past the map's, and a count that differs, are logged.
  */
 static int nxs_csi2_tegra_check_modes(struct nxs_csi2_tegra *priv)
 {
@@ -249,10 +249,10 @@ static int nxs_csi2_tegra_check_modes(struct nxs_csi2_tegra *priv)
 		u64 fps_milli = div64_u64((u64)m->control_properties.max_framerate * 1000, factor);
 
 		if (!mode) {
-			dev_err(dev, "mode%u: %ux%u at %u bits is in the device tree and not in the camera map: regenerate the overlay (nxs switch)\n",
-				i, m->image_properties.width, m->image_properties.height,
-				nxs_bit_depth(m->image_properties.pixel_format));
-			return -EINVAL;
+			dev_warn(dev, "mode%u: %ux%u at %u bits is in the device tree and not in the camera map: another camera of the port's pool\n",
+				 i, m->image_properties.width, m->image_properties.height,
+				 nxs_bit_depth(m->image_properties.pixel_format));
+			continue;
 		}
 		if (mode->fps_max_milli && fps_milli > mode->fps_max_milli)
 			dev_warn(dev, "mode%u: %llu.%03llu fps in the device tree, the camera map tops at %u.%03u\n",
@@ -598,6 +598,8 @@ static int nxs_csi2_tegra_set_mode(struct tegracam_device *tc_dev)
 	int frame;
 	int err;
 
+	nxs_csi2_core_session(core, true);
+
 	if (!priv || priv->passive)
 		return 0;
 	priv->configured = false;
@@ -652,6 +654,10 @@ static int nxs_csi2_tegra_start_streaming(struct tegracam_device *tc_dev)
 
 static int nxs_csi2_tegra_stop_streaming(struct tegracam_device *tc_dev)
 {
+	struct nxs_csi2_tegra *priv = tegracam_get_privdata(tc_dev);
+
+	nxs_csi2_core_session(&priv->core, false);
+
 	return 0;
 }
 

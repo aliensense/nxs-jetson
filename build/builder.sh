@@ -233,7 +233,7 @@ ports, built for kernel \`${EXPECTED_UNAME}\` over stock JetPack.
     orin\$ sudo ./install.sh         install modules + DTBOs (depmod)
     orin\$ sudo ./install.sh --rollback
 
-Then write the boot entry, with \`nxs host overlay <port> --install --select\`
+Then write the boot entry, with \`nxs compose <port> --install --select\`
 or by pasting the block from the Deployment Reference (DEPLOY.md §5), and
 reboot. Camera control lives in userspace (the \`nxs\` tool and its
 descriptor packs); these modules only make the ports appear.
@@ -260,7 +260,7 @@ EOF
 # host tool's to write), the corresponding source under /usr/src
 # (GPL-2.0), depmod on install and removal. It refuses another Jetson
 # Linux release at install. The boot entry is the host tool's
-# (`nxs switch`), never the package's.
+# (`nxs compose`), never the package's.
 deb() {
     log "deb: ${DEB_PACKAGE}_${L4T_VERSION}_arm64.deb"
     command -v dpkg-deb >/dev/null || { echo "FATAL: dpkg-deb is not in the container" >&2; exit 1; }

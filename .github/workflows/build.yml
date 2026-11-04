@@ -74,5 +74,6 @@ jobs:
           gh release create "$TAG" --title "nxs-jetson ${TAG}" \
             --notes-file notes.md \
             "output/nxs-jetson_${TAG}_arm64.deb" "output/nxs-jetson-${TAG}-src.tar.gz" output/SHA256SUMS.txt \
-            || gh release upload "$TAG" --clobber \
-              "output/nxs-jetson_${TAG}_arm64.deb" "output/nxs-jetson-${TAG}-src.tar.gz" output/SHA256SUMS.txt
+            || { gh release upload "$TAG" --clobber \
+                   "output/nxs-jetson_${TAG}_arm64.deb" "output/nxs-jetson-${TAG}-src.tar.gz" output/SHA256SUMS.txt \
+                 && gh release edit "$TAG" --title "nxs-jetson ${TAG}" --notes-file notes.md; }

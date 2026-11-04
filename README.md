@@ -10,7 +10,7 @@ Take the package for the booted release from the release page and install it:
 sudo apt install ./nxs-jetson_39.2.1_arm64.deb
 ```
 
-It installs `universal_aliensense.ko`, `nxs-csi2-core.ko`, `nxs-csi2-tegra.ko` and `aliensense_generic_des.ko` under `/lib/modules/<kernel>/updates/drivers/media/i2c/`, the overlays under `/boot/camera-dtbos/`, and its source under `/usr/src/nxs-jetson-<l4t>/`. The boot entry that loads them is written by the `nxs` host tool (`nxs switch`).
+It installs `universal_aliensense.ko`, `nxs-csi2-core.ko`, `nxs-csi2-tegra.ko` and `aliensense_generic_des.ko` under `/lib/modules/<kernel>/updates/drivers/media/i2c/`, the overlays under `/boot/camera-dtbos/`, and its source under `/usr/src/nxs-jetson-<l4t>/`. The boot entry that loads them is written by the `nxs` host tool (`nxs compose`).
 
 ## Build
 
